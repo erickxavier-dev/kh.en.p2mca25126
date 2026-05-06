@@ -5,5 +5,14 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    strictPort: true,
   },
+  optimizeDeps: {
+    include: ['logging-middleware']
+  },
+  build: {
+    commonjsOptions: {
+      include: [/logging-middleware/, /node_modules/]
+    }
+  }
 });

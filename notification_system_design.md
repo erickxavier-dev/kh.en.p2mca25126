@@ -229,3 +229,43 @@ db.notifications.updateMany(
   }
 );
 ```
+
+---
+
+## Stage 3
+
+### Query Accuracy and Performance
+
+**Is this query accurate?**
+Yes, the query is functionally accurate. It correctly retrieves all unread notifications for the specific student (`studentID = 1042` and `isRead = false`) and sorts them chronologically by their creation time ascending.
+
+**Why is this slow?**
+The query is slow because the database lacks an optimal index for this specific access pattern. With 5,000,000 records in the `notifications` table, filtering by `studentID` and `isRead` and then sorting by `createdAt` forces the database engine to perform a full table scan (or a large unoptimized index scan followed by an expensive in-memory sort). Scanning millions of rows takes $O(N)$ time complexity and consumes significant CPU and I/O resources, causing the performance bottleneck.
+
+### Proposed Changes and Computation Cost
+
+**What would you change?**
+I would add a **composite B-Tree index** on the exact columns used for filtering and sorting. Specifically, the index should be on `(studentID, isRead, createdAt)`.
+
+**Likely computation cost:**
+With the composite index `(studentID, isRead, createdAt)`, the database can traverse the B-Tree directly to the subset of rows matching `studentID = 1042` AND `isRead = false`. Because `createdAt` is the third key in the index, the retrieved rows are natively returned in sorted order, completely eliminating the need for an additional sort step. The computation cost (time complexity) reduces from $O(N \log N)$ to $O(\log N + K)$, where N is the total number of notifications and K is the number of unread notifications for that student. The query will execute in milliseconds.
+
+### Advice on Indexing Every Column
+
+**Is this advice effective? Why/Why not?**
+No, adding indexes on every column is **highly ineffective** and is a well-known database anti-pattern. 
+
+**Why not?**
+1. **Severe Write Performance Penalty:** Every time a new notification is inserted, updated, or deleted, the database must synchronously update *every single index*. In a high-throughput notification system, this will cripple write performance.
+2. **Massive Storage Overhead:** Indexes consume disk space and RAM. Indexing every column will exponentially bloat the database size, leading to higher infrastructure costs and pushing valuable data out of the in-memory cache.
+3. **Query Optimizer Confusion:** Having an excessive number of indexes can confuse the database's query optimizer, causing it to occasionally choose suboptimal execution plans.
+
+### SQL Query: Placement Notifications in the Last 7 Days
+
+```sql
+SELECT DISTINCT studentID 
+FROM notifications
+WHERE notificationType = 'Placement'
+  AND createdAt >= NOW() - INTERVAL 7 DAY;
+```
+*(Note: Date subtraction syntax may vary slightly depending on the SQL dialect, e.g., PostgreSQL uses `CURRENT_DATE - INTERVAL '7 days'`)*

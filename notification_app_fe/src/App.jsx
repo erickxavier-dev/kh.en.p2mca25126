@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Container, Typography, AppBar, Toolbar, Box, Card, CardContent } from '@mui/material';
-import * as logPkg from 'logging-middleware';
-const { Log } = logPkg;
+import { Log } from '../../logging_middleware/index.mjs';
 
 export default function App() {
   const [data, setData] = useState({ placements: [], events: [], results: [] });
