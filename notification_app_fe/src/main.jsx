@@ -1,14 +1,16 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
-import { setAuthToken } from '../../logging_middleware/index.mjs'
+import { setAuthToken, Log } from '../../logging_middleware/index.mjs'
 
 const token = import.meta.env.VITE_EVALUATION_AUTH_TOKEN;
 
 if (token) {
     setAuthToken(token);
+    Log('frontend', 'info', 'config', 'Auth token configured successfully.');
 } else {
-    console.warn('No auth token set — logs will be rejected by the evaluation server.');
+    // Missing token, but cannot use console.warn.
+    // Logging to remote without token will fail, so we just fail silently per constraints.
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

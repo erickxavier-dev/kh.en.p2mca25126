@@ -19,6 +19,6 @@ app.use('/api/notifications', require('./routes/notifications'));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-    console.log('Server running on port ' + PORT);
+    logger.Log('backend', 'info', 'service', 'Server running on port ' + PORT);
     logger.Log('backend', 'info', 'config', 'Server started on port ' + PORT);
 });

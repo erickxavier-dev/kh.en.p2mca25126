@@ -1,296 +1,342 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Container, Typography, AppBar, Toolbar, Box, Card, CardContent, Select, MenuItem, FormControl, InputLabel, Chip, ThemeProvider, createTheme, CssBaseline, Fade, Grow } from '@mui/material';
+import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { 
+  Container, Typography, AppBar, Toolbar, Box, Card, CardContent, 
+  Select, MenuItem, FormControl, InputLabel, Chip, ThemeProvider, 
+  createTheme, CssBaseline, Button, Pagination, Badge 
+} from '@mui/material';
 import { Log } from '../../logging_middleware/index.mjs';
 
-const TYPE_WEIGHT = { Placement: 300, Result: 200, Event: 100 };
-
-function calcScore(n) {
-    const w = (TYPE_WEIGHT[n.Type] || 0) * 1e12;
-    const t = new Date(n.Timestamp).getTime();
-    return w + t;
-}
-
-class MinHeap {
-    constructor() { this.heap = []; }
-    size() { return this.heap.length; }
-    peek() { return this.heap[0]; }
-    push(item) {
-        this.heap.push(item);
-        this._up(this.heap.length - 1);
-    }
-    pop() {
-        const top = this.heap[0];
-        const tail = this.heap.pop();
-        if (this.heap.length > 0) {
-            this.heap[0] = tail;
-            this._down(0);
-        }
-        return top;
-    }
-    _up(i) {
-        while (i > 0) {
-            const p = Math.floor((i - 1) / 2);
-            if (this.heap[p].score <= this.heap[i].score) break;
-            [this.heap[p], this.heap[i]] = [this.heap[i], this.heap[p]];
-            i = p;
-        }
-    }
-    _down(i) {
-        const n = this.heap.length;
-        while (true) {
-            let min = i;
-            const l = 2 * i + 1, r = 2 * i + 2;
-            if (l < n && this.heap[l].score < this.heap[min].score) min = l;
-            if (r < n && this.heap[r].score < this.heap[min].score) min = r;
-            if (min === i) break;
-            [this.heap[min], this.heap[i]] = [this.heap[i], this.heap[min]];
-            i = min;
-        }
-    }
-}
-
-function getTopN(notifications, n) {
-    const heap = new MinHeap();
-    for (const notif of notifications) {
-        const s = calcScore(notif);
-        const entry = { ...notif, score: s };
-        if (heap.size() < n) {
-            heap.push(entry);
-        } else if (s > heap.peek().score) {
-            heap.pop();
-            heap.push(entry);
-        }
-    }
-    const result = [];
-    while (heap.size() > 0) result.unshift(heap.pop());
-    return result;
-}
-
-// Premium Dark Theme using MUI
-const premiumTheme = createTheme({
+const appTheme = createTheme({
   palette: {
-    mode: 'dark',
-    primary: { main: '#38bdf8' },
-    secondary: { main: '#a78bfa' },
-    success: { main: '#34d399' },
-    background: {
-      default: '#0f172a',
-      paper: '#1e293b'
-    }
+    mode: 'light',
+    primary: { main: '#1976d2' },
+    secondary: { main: '#757575' },
+    background: { default: '#f4f6f8', paper: '#ffffff' },
+    divider: '#e0e0e0',
   },
   typography: {
-    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
-    h4: { fontWeight: 800, letterSpacing: '-0.5px' },
-    h5: { fontWeight: 700 },
-    h6: { fontWeight: 600 },
+    fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
+    h5: { fontWeight: 500 },
+    h6: { fontWeight: 500 },
   },
-  shape: { borderRadius: 16 },
+  shape: { borderRadius: 8 },
   components: {
     MuiCard: {
       styleOverrides: {
         root: {
-          backgroundImage: 'linear-gradient(145deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%)',
-          backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4)',
-          transition: 'transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out',
-          '&:hover': {
-            transform: 'translateY(-5px)',
-            boxShadow: '0 12px 40px 0 rgba(0, 0, 0, 0.6)',
-          }
+          boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.05)',
+          border: '1px solid #e0e0e0',
         }
       }
     },
     MuiAppBar: {
       styleOverrides: {
         root: {
-          background: 'rgba(15, 23, 42, 0.8)',
-          backdropFilter: 'blur(12px)',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
-          boxShadow: 'none',
+          backgroundColor: '#ffffff',
+          color: '#333333',
+          boxShadow: '0px 1px 3px rgba(0, 0, 0, 0.08)',
         }
       }
+    },
+    MuiButton: {
+      styleOverrides: { root: { textTransform: 'none' } }
     }
   }
 });
 
-export default function App() {
-  const [data, setData] = useState({ placements: [], events: [], results: [] });
-  const [liveNotifications, setLiveNotifications] = useState([]);
-  const [topN, setTopN] = useState(10);
-  const [loaded, setLoaded] = useState(false);
+const weights = { Placement: 300, Result: 200, Event: 100 };
+
+function getNotifScore(n) {
+    let w = (weights[n.Type] || 0) * 1e12;
+    return w + new Date(n.Timestamp).getTime();
+}
+
+class PrioQueue {
+    constructor() { this.items = []; }
+    size() { return this.items.length; }
+    peek() { return this.items[0]; }
+    push(item) {
+        this.items.push(item);
+        let i = this.items.length - 1;
+        while (i > 0) {
+            let p = Math.floor((i - 1) / 2);
+            if (this.items[p].score <= this.items[i].score) break;
+            [this.items[p], this.items[i]] = [this.items[i], this.items[p]];
+            i = p;
+        }
+    }
+    pop() {
+        const top = this.items[0];
+        const tail = this.items.pop();
+        if (this.items.length > 0) {
+            this.items[0] = tail;
+            let i = 0;
+            const n = this.items.length;
+            while (true) {
+                let min = i;
+                const l = 2 * i + 1, r = 2 * i + 2;
+                if (l < n && this.items[l].score < this.items[min].score) min = l;
+                if (r < n && this.items[r].score < this.items[min].score) min = r;
+                if (min === i) break;
+                [this.items[min], this.items[i]] = [this.items[i], this.items[min]];
+                i = min;
+            }
+        }
+        return top;
+    }
+}
+
+function computeTopN(list, limit) {
+    const q = new PrioQueue();
+    for (const x of list) {
+        const entry = { ...x, score: getNotifScore(x) };
+        if (q.size() < limit) {
+            q.push(entry);
+        } else if (entry.score > q.peek().score) {
+            q.pop();
+            q.push(entry);
+        }
+    }
+    const out = [];
+    while (q.size() > 0) out.unshift(q.pop());
+    return out;
+}
+
+function Navigation() {
+  const loc = useLocation();
+  return (
+    <AppBar position="sticky">
+      <Toolbar>
+        <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 'bold', color: '#1976d2' }}>
+          Campus Connect
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <Button component={Link} to="/" color={loc.pathname === '/' ? 'primary' : 'inherit'} variant={loc.pathname === '/' ? 'contained' : 'text'} disableElevation>
+            Priority Inbox
+          </Button>
+          <Button component={Link} to="/all" color={loc.pathname === '/all' ? 'primary' : 'inherit'} variant={loc.pathname === '/all' ? 'contained' : 'text'} disableElevation>
+            All Notifications
+          </Button>
+        </Box>
+      </Toolbar>
+    </AppBar>
+  );
+}
+
+function useViews() {
+  const [reads, setReads] = useState(() => {
+    let s = localStorage.getItem('seen_notifs');
+    return s ? JSON.parse(s) : [];
+  });
+
+  const doRead = (id) => {
+    if (!reads.includes(id)) {
+      let nx = [...reads, id];
+      setReads(nx);
+      localStorage.setItem('seen_notifs', JSON.stringify(nx));
+    }
+  };
+  return { reads, doRead };
+}
+
+function PriorityView({ reads, doRead }) {
+  const [live, setLive] = useState([]);
+  const [limit, setLimit] = useState(10);
+  const [filterType, setFilterType] = useState('All');
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    Log('frontend', 'info', 'page', 'Dashboard loaded');
-
-    Promise.all([
-      fetch('http://localhost:3001/api/notifications/placements').then(r => r.json()),
-      fetch('http://localhost:3001/api/notifications/events').then(r => r.json()),
-      fetch('http://localhost:3001/api/notifications/results').then(r => r.json())
-    ]).then(([placements, events, results]) => {
-      setData({ placements, events, results });
-      setLoaded(true);
-    }).catch(err => console.error('Fetch error:', err));
-
-    const token = import.meta.env.VITE_EVALUATION_AUTH_TOKEN;
-    if (token) {
-        fetch('http://20.207.122.201/evaluation-service/notifications', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        }).then(r => r.json())
-          .then(json => {
-              if (json.notifications) setLiveNotifications(json.notifications);
-          })
-          .catch(err => console.error("Priority API fetch failed", err));
-    }
+    Log('frontend', 'info', 'page', 'Priority Inbox Loaded');
+    let t = import.meta.env.VITE_EVALUATION_AUTH_TOKEN;
+    
+    fetch('/evaluation-service/notifications', { headers: { 'Authorization': 'Bearer ' + t } })
+      .then(res => res.json())
+      .then(d => {
+          if (d.notifications) setLive(d.notifications);
+          setIsLoading(false);
+      })
+      .catch(e => {
+          Log('frontend', 'error', 'api', `Priority API fetch failed: ${e.message}`);
+          setIsLoading(false);
+      });
   }, []);
 
-  const priorityInbox = useMemo(() => {
-      return getTopN(liveNotifications, topN);
-  }, [liveNotifications, topN]);
+  const toShow = useMemo(() => {
+      let arr = live;
+      if (filterType !== 'All') arr = arr.filter(n => n.Type === filterType);
+      return computeTopN(arr, limit);
+  }, [live, limit, filterType]);
 
-  const getIcon = (type) => {
-      if (type === 'Placement') return '💼';
-      if (type === 'Event') return '📅';
-      return '🎓';
-  };
+  const colorMap = { Placement: 'primary', Result: 'success', Event: 'default' };
 
   return (
-    <ThemeProvider theme={premiumTheme}>
-      <CssBaseline />
-      
-      <AppBar position="sticky">
-        <Toolbar>
-          <Typography variant="h5" sx={{ mr: 2 }}>🔔</Typography>
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1, background: 'linear-gradient(90deg, #38bdf8, #a78bfa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            Campus Connect Hub
-          </Typography>
-        </Toolbar>
-      </AppBar>
-
-      <Container maxWidth="lg" sx={{ mt: 5, mb: 8 }}>
-        
-        {/* Priority Inbox */}
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-            <Typography variant="h4" color="text.primary">
-                Priority Inbox
-            </Typography>
-            <FormControl size="small" sx={{ minWidth: 120 }}>
-                <InputLabel id="top-n-label">Show Top</InputLabel>
-                <Select labelId="top-n-label" value={topN} label="Show Top" onChange={(e) => setTopN(e.target.value)}>
-                    <MenuItem value={5}>Top 5</MenuItem>
-                    <MenuItem value={10}>Top 10</MenuItem>
-                    <MenuItem value={15}>Top 15</MenuItem>
-                    <MenuItem value={20}>Top 20</MenuItem>
-                </Select>
-            </FormControl>
-        </Box>
-
-        <Grow in={true} timeout={800}>
-          <Card sx={{ mb: 6, borderRadius: 4, overflow: 'hidden' }}>
-              <CardContent sx={{ p: 0 }}>
-                  {priorityInbox.length === 0 ? (
-                      <Box p={4} textAlign="center">
-                          <Typography color="text.secondary">Loading priority notifications...</Typography>
-                      </Box>
-                  ) : (
-                      <Box display="flex" flexDirection="column">
-                          {priorityInbox.map((item, index) => (
-                              <Box key={item.ID} display="flex" alignItems="center" gap={3} p={2.5} 
-                                   sx={{ 
-                                     borderBottom: index !== priorityInbox.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                                     transition: 'background 0.2s',
-                                     '&:hover': { background: 'rgba(255,255,255,0.03)' }
-                                   }}>
-                                  
-                                  <Typography variant="h5" color="text.disabled" sx={{ minWidth: '40px', textAlign: 'center', fontWeight: 'bold' }}>
-                                      #{index + 1}
-                                  </Typography>
-                                  
-                                  <Chip 
-                                    icon={getIcon(item.Type)}
-                                    label={item.Type} 
-                                    color={item.Type === 'Placement' ? 'primary' : item.Type === 'Result' ? 'success' : 'secondary'} 
-                                    variant="outlined"
-                                    sx={{ minWidth: '110px', fontWeight: 'bold', borderWidth: 2 }} 
-                                  />
-                                  
-                                  <Box flex={1}>
-                                      <Typography variant="body1" sx={{ fontWeight: 600, fontSize: '1.1rem', mb: 0.5 }}>
-                                          {item.Message}
-                                      </Typography>
-                                      <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                          {item.Timestamp}
-                                      </Typography>
-                                  </Box>
-                              </Box>
-                          ))}
-                      </Box>
-                  )}
-              </CardContent>
-          </Card>
-        </Grow>
-
-        <Typography variant="h4" mb={4} color="text.primary">
-            Standard Feeds
-        </Typography>
-
-        <Fade in={loaded} timeout={1000}>
-          <Box display="flex" gap={4} flexWrap="wrap">
-            
-            <Card sx={{ flex: '1 1 300px', borderRadius: 4 }}>
-              <CardContent sx={{ p: 3 }}>
-                <Box display="flex" alignItems="center" gap={1} mb={3}>
-                  <Typography variant="h5" sx={{ mr: 1 }}>💼</Typography>
-                  <Typography variant="h5" color="primary.main">Placements</Typography>
-                </Box>
-                {data.placements.length === 0 && <Typography color="text.secondary">No placement news yet.</Typography>}
-                {data.placements.map(item => (
-                  <Box key={item.id} mb={2.5}>
-                    <Typography variant="subtitle1" fontWeight="bold">{item.company}</Typography>
-                    <Typography variant="body2" color="text.secondary" mb={0.5}>{item.role}</Typography>
-                    <Typography variant="caption" color="primary.light">{item.date}</Typography>
-                  </Box>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card sx={{ flex: '1 1 300px', borderRadius: 4 }}>
-              <CardContent sx={{ p: 3 }}>
-                <Box display="flex" alignItems="center" gap={1} mb={3}>
-                  <Typography variant="h5" sx={{ mr: 1 }}>📅</Typography>
-                  <Typography variant="h5" color="secondary.main">Events</Typography>
-                </Box>
-                {data.events.length === 0 && <Typography color="text.secondary">No events scheduled.</Typography>}
-                {data.events.map(ev => (
-                  <Box key={ev.id} mb={2.5}>
-                    <Typography variant="subtitle1" fontWeight="bold">{ev.name}</Typography>
-                    <Typography variant="body2" color="text.secondary" mb={0.5}>{ev.location}</Typography>
-                    <Typography variant="caption" color="secondary.light">{ev.time}</Typography>
-                  </Box>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card sx={{ flex: '1 1 300px', borderRadius: 4 }}>
-              <CardContent sx={{ p: 3 }}>
-                <Box display="flex" alignItems="center" gap={1} mb={3}>
-                  <Typography variant="h5" sx={{ mr: 1 }}>🎓</Typography>
-                  <Typography variant="h5" color="success.main">Results</Typography>
-                </Box>
-                {data.results.length === 0 && <Typography color="text.secondary">No results published.</Typography>}
-                {data.results.map(res => (
-                  <Box key={res.id} mb={2.5}>
-                    <Typography variant="subtitle1" fontWeight="bold">{res.sem}</Typography>
-                    <Typography variant="body2" color="success.light">{res.status}</Typography>
-                  </Box>
-                ))}
-              </CardContent>
-            </Card>
-
+    <Box>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+          <Typography variant="h5" color="text.primary">Priority Inbox</Typography>
+          <Box display="flex" gap={2}>
+              <FormControl size="small" sx={{ minWidth: 140, bgcolor: 'background.paper' }}>
+                  <InputLabel>Type</InputLabel>
+                  <Select value={filterType} label="Type" onChange={e => setFilterType(e.target.value)}>
+                      <MenuItem value="All">All Types</MenuItem>
+                      <MenuItem value="Placement">Placement</MenuItem>
+                      <MenuItem value="Result">Result</MenuItem>
+                      <MenuItem value="Event">Event</MenuItem>
+                  </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 120, bgcolor: 'background.paper' }}>
+                  <InputLabel>Show Top</InputLabel>
+                  <Select value={limit} label="Show Top" onChange={e => setLimit(e.target.value)}>
+                      <MenuItem value={5}>Top 5</MenuItem>
+                      <MenuItem value={10}>Top 10</MenuItem>
+                      <MenuItem value={15}>Top 15</MenuItem>
+                      <MenuItem value={20}>Top 20</MenuItem>
+                  </Select>
+              </FormControl>
           </Box>
-        </Fade>
+      </Box>
 
-      </Container>
+      <Card>
+          <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+              {isLoading ? (
+                  <Box p={4} textAlign="center"><Typography color="text.secondary">Loading priority notifications...</Typography></Box>
+              ) : toShow.length === 0 ? (
+                  <Box p={4} textAlign="center"><Typography color="text.secondary">No priority notifications found.</Typography></Box>
+              ) : (
+                  <Box display="flex" flexDirection="column">
+                      {toShow.map((it, idx) => {
+                          const fresh = !reads.includes(it.ID);
+                          return (
+                            <Box key={it.ID} display="flex" alignItems="center" gap={3} p={2.5} onClick={() => doRead(it.ID)} sx={{ 
+                                borderBottom: '1px solid #e0e0e0',
+                                backgroundColor: fresh ? 'rgba(25, 118, 210, 0.04)' : 'transparent',
+                                cursor: 'pointer',
+                                '&:hover': { backgroundColor: 'rgba(0,0,0,0.02)' }
+                              }}>
+                                <Typography variant="body2" color="text.secondary" sx={{ minWidth: '30px', fontWeight: 'bold' }}>#{idx + 1}</Typography>
+                                <Chip label={it.Type} color={colorMap[it.Type] || 'default'} size="small" sx={{ minWidth: '90px', borderRadius: '4px', fontWeight: 500 }} />
+                                <Box flex={1}>
+                                    <Badge color="error" variant="dot" invisible={!fresh} sx={{ '& .MuiBadge-badge': { right: -10, top: 5 } }}>
+                                      <Typography variant="body1" sx={{ fontWeight: fresh ? 600 : 400 }}>{it.Message}</Typography>
+                                    </Badge>
+                                    <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>{it.Timestamp}</Typography>
+                                </Box>
+                            </Box>
+                          );
+                      })}
+                  </Box>
+              )}
+          </CardContent>
+      </Card>
+    </Box>
+  );
+}
+
+function FeedView({ reads, doRead }) {
+  const [items, setItems] = useState([]);
+  const [pg, setPg] = useState(1);
+  const [limit] = useState(10);
+  const [fType, setFType] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+
+  const loadData = () => {
+    setIsLoading(true);
+    let t = import.meta.env.VITE_EVALUATION_AUTH_TOKEN;
+    
+    let path = `/evaluation-service/notifications?page=${pg}&limit=${limit}`;
+    if (fType) path += `&notification_type=${fType}`;
+
+    fetch(path, { headers: { 'Authorization': 'Bearer ' + t } })
+      .then(res => res.json())
+      .then(d => {
+          if (d.notifications) setItems(d.notifications);
+          setIsLoading(false);
+      })
+      .catch(e => {
+          Log('frontend', 'error', 'api', `API fetch failed: ${e.message}`);
+          setIsLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    Log('frontend', 'info', 'page', 'All Notifications Loaded');
+    loadData();
+    // eslint-disable-next-line
+  }, [pg, fType]);
+
+  const colors = { Placement: 'primary', Result: 'success', Event: 'default' };
+
+  return (
+    <Box>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+          <Typography variant="h5" color="text.primary">All Notifications</Typography>
+          <FormControl size="small" sx={{ minWidth: 160, bgcolor: 'background.paper' }}>
+              <InputLabel>Filter by Type</InputLabel>
+              <Select value={fType} label="Filter by Type" onChange={e => { setFType(e.target.value); setPg(1); }}>
+                  <MenuItem value="">All</MenuItem>
+                  <MenuItem value="Placement">Placement</MenuItem>
+                  <MenuItem value="Result">Result</MenuItem>
+                  <MenuItem value="Event">Event</MenuItem>
+              </Select>
+          </FormControl>
+      </Box>
+
+      <Card sx={{ mb: 3 }}>
+          <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
+              {isLoading ? (
+                  <Box p={4} textAlign="center"><Typography color="text.secondary">Loading notifications...</Typography></Box>
+              ) : items.length === 0 ? (
+                  <Box p={4} textAlign="center"><Typography color="text.secondary">No notifications found.</Typography></Box>
+              ) : (
+                  <Box display="flex" flexDirection="column">
+                      {items.map(it => {
+                          let fresh = !reads.includes(it.ID);
+                          return (
+                            <Box key={it.ID} display="flex" alignItems="center" gap={3} p={2.5} onClick={() => doRead(it.ID)} sx={{ 
+                                borderBottom: '1px solid #e0e0e0',
+                                backgroundColor: fresh ? 'rgba(25, 118, 210, 0.04)' : 'transparent',
+                                cursor: 'pointer',
+                                '&:hover': { backgroundColor: 'rgba(0,0,0,0.02)' }
+                              }}>
+                                <Chip label={it.Type} color={colors[it.Type] || 'default'} size="small" sx={{ minWidth: '90px', borderRadius: '4px', fontWeight: 500 }} />
+                                <Box flex={1}>
+                                    <Badge color="error" variant="dot" invisible={!fresh} sx={{ '& .MuiBadge-badge': { right: -10, top: 5 } }}>
+                                      <Typography variant="body1" sx={{ fontWeight: fresh ? 600 : 400 }}>{it.Message}</Typography>
+                                    </Badge>
+                                    <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>{it.Timestamp}</Typography>
+                                </Box>
+                            </Box>
+                          );
+                      })}
+                  </Box>
+              )}
+          </CardContent>
+      </Card>
+      
+      {items.length > 0 && (
+        <Box display="flex" justifyContent="center" mb={4}>
+          <Pagination count={10} page={pg} onChange={(e, val) => setPg(val)} color="primary" />
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+export default function App() {
+  const { reads, doRead } = useViews();
+
+  return (
+    <ThemeProvider theme={appTheme}>
+      <CssBaseline />
+      <BrowserRouter>
+        <Navigation />
+        <Container maxWidth="md" sx={{ mt: 5, mb: 8 }}>
+          <Routes>
+            <Route path="/" element={<PriorityView reads={reads} doRead={doRead} />} />
+            <Route path="/all" element={<FeedView reads={reads} doRead={doRead} />} />
+          </Routes>
+        </Container>
+      </BrowserRouter>
     </ThemeProvider>
   );
 }

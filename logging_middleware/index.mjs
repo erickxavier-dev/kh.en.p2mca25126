@@ -23,7 +23,7 @@ async function Log(stack, level, pkg, message) {
     if (!isValidPackage(stack, pkg)) return;
 
     try {
-        const resp = await fetch('http://20.207.122.201/evaluation-service/logs', {
+        const resp = await fetch('/evaluation-service/logs', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -31,12 +31,8 @@ async function Log(stack, level, pkg, message) {
             },
             body: JSON.stringify({ stack, level, package: pkg, message })
         });
-
-        if (!resp.ok) {
-            console.error('Log send failed, status:', resp.status);
-        }
     } catch (err) {
-        console.error('Could not reach log server:', err.message);
+        // Silently fail to adhere to "no inbuilt loggers" rule
     }
 }
 

@@ -33,12 +33,8 @@ async function Log(stack, level, pkg, message) {
             },
             body: JSON.stringify({ stack, level, package: pkg, message })
         });
-
-        if (!resp.ok) {
-            console.error('Log send failed, status:', resp.status);
-        }
     } catch (err) {
-        console.error('Could not reach log server:', err.message);
+        // Silently fail to adhere to "no inbuilt loggers" rule
     }
 }
 
