@@ -138,3 +138,94 @@ eventSource.onerror = (error) => {
 
 ### Payload Structure over SSE
 When an event occurs on the backend, the SSE stream will push a payload structured identically to the `Fetch Notifications` object, allowing the frontend to instantly append it to the application state.
+
+---
+
+## Stage 2
+
+### Recommended Persistent Storage
+**MongoDB (NoSQL Document Store)** is the highly recommended persistent storage for this notification platform.
+
+**Explanation for Choice:**
+1. **Schema Flexibility**: Different notification categories require completely different metadata structures (e.g., Placements require `companyId` and `role`, Events require `location` and `time`, Results require `semester` and `status`). MongoDB's document model handles this heterogeneous data naturally without requiring complex joins or sparse columns.
+2. **High Write Throughput**: Notification systems generate massive amounts of write operations (e.g., marking notifications as read for thousands of students). MongoDB scales horizontally and handles high-volume writes exceptionally well.
+3. **Data Lifecycle Management**: MongoDB has native TTL (Time-To-Live) indexes, making it trivial to automatically delete outdated notifications after a certain period, preventing database bloat.
+
+### Database Schema
+We will use a `notifications` collection with the following document structure:
+
+```json
+{
+  "_id": ObjectId("64a7b9c9f1a2b3c4d5e6f7g8"),
+  "userId": ObjectId("user_12345"),
+  "category": "placements", 
+  "title": "Tech Corp Campus Drive",
+  "message": "Tech Corp is visiting the campus on June 1st.",
+  "isRead": false,
+  "createdAt": ISODate("2026-05-06T10:00:00Z"),
+  "readAt": null,
+  "metadata": {
+    "companyId": "comp_89",
+    "role": "Software Engineer"
+  }
+}
+```
+
+### Problems Arising from Data Volume Increase
+As the system scales and data volume increases over time, the following problems could arise:
+1. **Slow Read Queries**: Fetching the latest unread notifications for a user will become slow if the collection grows to millions of documents and isn't properly indexed.
+2. **High Write Contention**: Broadcasting a campus-wide event to 10,000 students requires inserting 10,000 documents simultaneously, which could cause a major processing bottleneck.
+3. **Storage Costs**: Retaining years of old, read notifications will unnecessarily consume disk space and memory cache.
+
+### Solutions to Scaling Problems
+1. **TTL Indexes for Archival**: Implement a TTL index on `createdAt` (e.g., expire after 90 days) to automatically drop old notifications and maintain a constant storage footprint.
+2. **Fan-out on Read (for Broadcasts)**: Instead of creating 10,000 individual documents for a campus-wide broadcast, store a single "global" notification document. When a user requests their feed, merge their individual notifications with active global notifications on the fly.
+3. **Compound Indexing**: Ensure a compound index exists on `{ userId: 1, isRead: 1, createdAt: -1 }` to guarantee O(1) read performance when fetching a specific user's unread inbox.
+4. **Caching**: Utilize Redis to cache the "unread notification count" for active users, eliminating the need to run an aggregate count query on MongoDB every time the user opens the application.
+
+### Queries Based on REST APIs (Stage 1)
+
+**1. Fetch Notifications (GET /api/v1/notifications)**
+```javascript
+// Query for fetching unread placement notifications for a specific user
+db.notifications.find({ 
+  userId: ObjectId("user_12345"), 
+  category: "placements",
+  isRead: false 
+})
+.sort({ createdAt: -1 })
+.skip(0)
+.limit(20);
+```
+
+**2. Mark Notification as Read (PATCH /api/v1/notifications/:id/read)**
+```javascript
+db.notifications.updateOne(
+  { 
+    _id: ObjectId("64a7b9c9f1a2b3c4d5e6f7g8"), 
+    userId: ObjectId("user_12345") 
+  },
+  { 
+    $set: { 
+      isRead: true, 
+      readAt: new Date() 
+    } 
+  }
+);
+```
+
+**3. Mark All Notifications as Read (POST /api/v1/notifications/read-all)**
+```javascript
+db.notifications.updateMany(
+  { 
+    userId: ObjectId("user_12345"), 
+    isRead: false 
+  },
+  { 
+    $set: { 
+      isRead: true, 
+      readAt: new Date() 
+    } 
+  }
+);
+```
