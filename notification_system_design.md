@@ -448,4 +448,30 @@ function get_job_status(job_id):
 - **Dead-letter queue** — persistent failures are visible and recoverable manually
 - **Job status endpoint** — HR can check in real time how many students received the notification
 
+---
+
+## Stage 6
+
+### Priority Inbox Implementation
+
+To handle the new Priority Inbox requirement where the top `N` notifications must be displayed based on a specific weighting system (Placement > Result > Event) and recency, we need an efficient way to filter and rank an incoming stream of notifications without relying on a database query.
+
+### The Algorithm: Min-Heap for Top-N Retrieval
+
+Sorting the entire list of notifications would take **O(M log M)** time, where M is the total number of notifications. As the number of notifications grows, sorting the entire array becomes inefficient, especially if we only care about the top 10.
+
+Instead, we use a **Min-Heap (Priority Queue)** of size `N`:
+1. **Scoring**: Each notification is assigned a numerical score. The type provides the base weight (`Placement = 300`, `Result = 200`, `Event = 100`). This is multiplied by a large factor (e.g., $10^{12}$) to ensure type always outweighs timestamp. The timestamp (in milliseconds) is added to this base weight. This combined score correctly models the requirement: `Weight > Recency`.
+2. **Heap Operations**: As we iterate through the list of M notifications, we push them into the Min-Heap.
+3. **Maintaining Size N**: If the heap exceeds size N (e.g., 10), we compare the incoming notification's score with the minimum score currently in the heap (which is always at the root, `O(1)` access). If the new notification is better, we `pop()` the weakest notification and `push()` the new one. Otherwise, we discard the new notification.
+
+### Performance
+
+This approach gives us a time complexity of **O(M log N)** and a space complexity of **O(N)**. Since N is typically small (e.g., 10 or 20) and fixed, `log N` is effectively a constant, making the algorithm run in **O(M)** (linear time). This is highly efficient and easily handles continuous incoming streams of data.
+
+### Implementation Details
+
+The implementation is located in `priority_inbox.js`. It fetches data from the provided Evaluation API, parses the JSON, and runs the Min-Heap algorithm. The script can be executed via Node.js from the command line, optionally taking `N` as an argument (e.g., `node priority_inbox.js 15`).
+
+
 

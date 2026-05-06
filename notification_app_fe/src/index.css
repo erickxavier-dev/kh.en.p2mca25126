@@ -1,0 +1,5 @@
+/* Reset base margins, MUI CssBaseline handles the rest */
+body {
+  margin: 0;
+  padding: 0;
+}
