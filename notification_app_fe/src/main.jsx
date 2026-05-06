@@ -1,15 +1,14 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import { setAuthToken } from '../../logging_middleware/index.mjs'
 
-import { setAuthToken } from '../../logging_middleware/index.mjs';
-
-// Pass token from environment variables
 const token = import.meta.env.VITE_EVALUATION_AUTH_TOKEN;
+
 if (token) {
     setAuthToken(token);
 } else {
-    console.warn("Auth token missing from environment!");
+    console.warn('No auth token set — logs will be rejected by the evaluation server.');
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

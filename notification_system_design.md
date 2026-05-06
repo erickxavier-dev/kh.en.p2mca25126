@@ -1,35 +1,42 @@
 # Stage 1
 
 ## Overview
-This document outlines the REST API design, contract, and real-time mechanism for the Campus Notification Platform. The platform provides students with real-time updates regarding Placements, Events, and Results.
 
-## Core Actions Supported
-1. **Fetch Notifications**: Retrieve a list of active notifications, filterable by category (Placements, Events, Results).
-2. **Mark as Read**: Mark a specific notification as read by the user.
-3. **Mark All as Read**: Mark all pending notifications as read in a single action.
-4. **Real-time Subscription**: Establish a connection to receive notifications instantaneously as they are published.
+This document covers the REST API design and real-time notification strategy for the Campus Notification Platform. Students on this platform get notified about Placements, Events, and Results when they are logged in.
+
+## What the Platform Needs to Support
+
+There are four main things users need to do:
+1. Get their list of notifications (filtered by category if needed)
+2. Mark a specific notification as read
+3. Clear all unread notifications in one shot
+4. Receive new notifications in real time without refreshing the page
 
 ---
 
-## REST API Design & Contracts
+## REST API Endpoints
 
-### Common Headers
-For all endpoints below, the following headers are required (assuming users are pre-authorized as per the guidelines):
-- `Authorization: Bearer <user_token>`
-- `Content-Type: application/json`
-- `Accept: application/json`
+### Headers Required on Every Request
 
-### 1. Fetch Notifications
-Retrieves notifications for the logged-in user.
+```
+Authorization: Bearer <user_token>
+Content-Type: application/json
+Accept: application/json
+```
 
-- **Endpoint**: `GET /api/v1/notifications`
-- **Query Parameters**:
-  - `category` (optional): Filter by `placements`, `events`, or `results`.
-  - `page` (optional): Page number (default: 1).
-  - `limit` (optional): Items per page (default: 20).
-  - `unreadOnly` (optional): Boolean, if true, returns only unread notifications.
+---
 
-**Response (200 OK)**
+### 1. GET /api/v1/notifications — Fetch Notifications
+
+Returns the notification list for the currently logged-in user.
+
+**Query Parameters (all optional):**
+- `category` — filter by `placements`, `events`, or `results`
+- `page` — defaults to 1
+- `limit` — defaults to 20 per page
+- `unreadOnly` — pass `true` to get only unread items
+
+**Response — 200 OK**
 ```json
 {
   "success": true,
@@ -39,7 +46,7 @@ Retrieves notifications for the logged-in user.
         "id": "notif_12345",
         "category": "placements",
         "title": "Tech Corp Campus Drive",
-        "message": "Tech Corp is visiting the campus on June 1st for Software Engineer roles.",
+        "message": "Tech Corp is visiting on June 1st for Software Engineer roles.",
         "isRead": false,
         "createdAt": "2026-05-06T10:00:00Z",
         "metadata": {
@@ -57,19 +64,25 @@ Retrieves notifications for the logged-in user.
 }
 ```
 
-### 2. Mark Notification as Read
-Marks a specific notification as read for the user.
+**Error Response — 401 Unauthorized**
+```json
+{
+  "success": false,
+  "error": "Token missing or expired"
+}
+```
 
-- **Endpoint**: `PATCH /api/v1/notifications/:id/read`
+---
 
-**Request Body**
-*(Empty body, the action is defined by the URL semantic)*
+### 2. PATCH /api/v1/notifications/:id/read — Mark One as Read
 
-**Response (200 OK)**
+Marks a single notification as read. The action is implicit from the URL so no request body is needed.
+
+**Response — 200 OK**
 ```json
 {
   "success": true,
-  "message": "Notification marked as read successfully.",
+  "message": "Marked as read.",
   "data": {
     "id": "notif_12345",
     "isRead": true,
@@ -78,19 +91,27 @@ Marks a specific notification as read for the user.
 }
 ```
 
-### 3. Mark All Notifications as Read
-Marks all unread notifications as read for the logged-in user.
+**Error Response — 404 Not Found**
+```json
+{
+  "success": false,
+  "error": "Notification not found"
+}
+```
 
-- **Endpoint**: `POST /api/v1/notifications/read-all`
+---
 
-**Request Body**
-*(Empty body)*
+### 3. POST /api/v1/notifications/read-all — Clear All Unread
 
-**Response (200 OK)**
+Marks every unread notification as read for the current user.
+
+**Request Body:** none
+
+**Response — 200 OK**
 ```json
 {
   "success": true,
-  "message": "All notifications marked as read.",
+  "message": "All notifications cleared.",
   "data": {
     "updatedCount": 14
   }
@@ -99,70 +120,70 @@ Marks all unread notifications as read for the logged-in user.
 
 ---
 
-## Real-Time Notification Mechanism
+## Real-Time Notifications — SSE
 
-To support real-time delivery of updates without requiring the frontend to continuously poll the server, we will utilize **Server-Sent Events (SSE)**. 
+For real-time delivery, the platform uses **Server-Sent Events (SSE)**. The reason SSE was picked over WebSockets is that notification delivery is one-directional — the server pushes to the client, and the client never needs to send data back over the same connection. SSE handles this cleanly and works over standard HTTP without extra infrastructure.
 
-While WebSockets provide bi-directional communication, SSE is lightweight, natively supported by HTTP/1.1 and HTTP/2, and perfectly suited for a unidirectional event stream (Server -> Client) which matches the requirements of a notification system.
+### Stream Endpoint
 
-### SSE Connection Design
+```
+GET /api/v1/notifications/stream
+Headers:
+  Authorization: Bearer <user_token>
+  Accept: text/event-stream
+```
 
-- **Endpoint**: `GET /api/v1/notifications/stream`
-- **Headers Required**:
-  - `Authorization: Bearer <user_token>`
-  - `Accept: text/event-stream`
-
-### Client-Side Implementation (React/JavaScript)
-The frontend developer can consume the stream using the native `EventSource` API:
+### Client Usage Example
 
 ```javascript
-const eventSource = new EventSource('/api/v1/notifications/stream');
+const stream = new EventSource('/api/v1/notifications/stream');
 
-// Listen for placement events
-eventSource.addEventListener('placements', (event) => {
-    const data = JSON.parse(event.data);
-    displayNotification(data);
+stream.addEventListener('placements', (e) => {
+    const notification = JSON.parse(e.data);
+    showToast(notification.title);
 });
 
-// Listen for generic updates
-eventSource.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    updateNotificationBadge(data);
+stream.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    updateBadgeCount(data.unreadCount);
 };
 
-// Handle connection errors
-eventSource.onerror = (error) => {
-    console.error("SSE Connection lost. Reconnecting...", error);
+stream.onerror = () => {
+    console.warn('Stream disconnected, will retry automatically.');
 };
 ```
 
-### Payload Structure over SSE
-When an event occurs on the backend, the SSE stream will push a payload structured identically to the `Fetch Notifications` object, allowing the frontend to instantly append it to the application state.
+### What Each SSE Event Looks Like
+
+```
+event: placements
+data: {"id":"notif_99","title":"Google Drive 2026","message":"Google is hiring for SDE roles.","createdAt":"2026-05-06T12:00:00Z"}
+
+event: results
+data: {"id":"notif_100","title":"Sem 5 Results Out","message":"Check your portal.","createdAt":"2026-05-06T12:05:00Z"}
+```
 
 ---
 
 ## Stage 2
 
-### Recommended Persistent Storage
-**MongoDB (NoSQL Document Store)** is the highly recommended persistent storage for this notification platform.
+### Why MongoDB
 
-**Explanation for Choice:**
-1. **Schema Flexibility**: Different notification categories require completely different metadata structures (e.g., Placements require `companyId` and `role`, Events require `location` and `time`, Results require `semester` and `status`). MongoDB's document model handles this heterogeneous data naturally without requiring complex joins or sparse columns.
-2. **High Write Throughput**: Notification systems generate massive amounts of write operations (e.g., marking notifications as read for thousands of students). MongoDB scales horizontally and handles high-volume writes exceptionally well.
-3. **Data Lifecycle Management**: MongoDB has native TTL (Time-To-Live) indexes, making it trivial to automatically delete outdated notifications after a certain period, preventing database bloat.
+MongoDB is the right fit for this platform. Notifications for placements, events, and results each have different fields — a placement notification needs `companyId` and `role`, while a result notification needs `semester` and `status`. A relational table would either waste columns or need complex joins. MongoDB handles each notification type as its own document shape naturally.
 
-### Database Schema
-We will use a `notifications` collection with the following document structure:
+Beyond schema flexibility, two other things matter: MongoDB handles high write loads well (broadcasting to thousands of students), and it has built-in TTL indexes to automatically expire old notifications — no cron job needed.
+
+### Document Structure
 
 ```json
 {
-  "_id": ObjectId("64a7b9c9f1a2b3c4d5e6f7g8"),
-  "userId": ObjectId("user_12345"),
-  "category": "placements", 
+  "_id": "ObjectId(64a7b9c9f1a2b3c4d5e6f7g8)",
+  "userId": "ObjectId(user_12345)",
+  "category": "placements",
   "title": "Tech Corp Campus Drive",
-  "message": "Tech Corp is visiting the campus on June 1st.",
+  "message": "Tech Corp is visiting on June 1st.",
   "isRead": false,
-  "createdAt": ISODate("2026-05-06T10:00:00Z"),
+  "createdAt": "2026-05-06T10:00:00Z",
   "readAt": null,
   "metadata": {
     "companyId": "comp_89",
@@ -171,62 +192,46 @@ We will use a `notifications` collection with the following document structure:
 }
 ```
 
-### Problems Arising from Data Volume Increase
-As the system scales and data volume increases over time, the following problems could arise:
-1. **Slow Read Queries**: Fetching the latest unread notifications for a user will become slow if the collection grows to millions of documents and isn't properly indexed.
-2. **High Write Contention**: Broadcasting a campus-wide event to 10,000 students requires inserting 10,000 documents simultaneously, which could cause a major processing bottleneck.
-3. **Storage Costs**: Retaining years of old, read notifications will unnecessarily consume disk space and memory cache.
+### Problems That Will Show Up at Scale
 
-### Solutions to Scaling Problems
-1. **TTL Indexes for Archival**: Implement a TTL index on `createdAt` (e.g., expire after 90 days) to automatically drop old notifications and maintain a constant storage footprint.
-2. **Fan-out on Read (for Broadcasts)**: Instead of creating 10,000 individual documents for a campus-wide broadcast, store a single "global" notification document. When a user requests their feed, merge their individual notifications with active global notifications on the fly.
-3. **Compound Indexing**: Ensure a compound index exists on `{ userId: 1, isRead: 1, createdAt: -1 }` to guarantee O(1) read performance when fetching a specific user's unread inbox.
-4. **Caching**: Utilize Redis to cache the "unread notification count" for active users, eliminating the need to run an aggregate count query on MongoDB every time the user opens the application.
+1. **Slow reads** — without indexes, fetching unread notifications for a user in a 10M document collection will be a full scan.
+2. **Write spikes** — sending a campus-wide notification creates thousands of inserts at once, which can block the database.
+3. **Storage bloat** — old read notifications pile up over time and eat memory cache space.
 
-### Queries Based on REST APIs (Stage 1)
+### Fixes for Each Problem
 
-**1. Fetch Notifications (GET /api/v1/notifications)**
+1. **TTL index on `createdAt`** — auto-deletes documents older than 90 days. Zero application code needed.
+2. **Fan-out on read for broadcasts** — store one global notification document instead of 10,000 identical copies. Merge it into the user feed at query time.
+3. **Compound index on `{ userId, isRead, createdAt }`** — makes per-user inbox queries fast regardless of collection size.
+4. **Redis cache for unread count** — avoids running a count aggregate on MongoDB every time the notification badge re-renders.
+
+### MongoDB Queries for Each API
+
+**Fetch unread placements for a user:**
 ```javascript
-// Query for fetching unread placement notifications for a specific user
-db.notifications.find({ 
-  userId: ObjectId("user_12345"), 
+db.notifications.find({
+  userId: ObjectId("user_12345"),
   category: "placements",
-  isRead: false 
+  isRead: false
 })
 .sort({ createdAt: -1 })
 .skip(0)
 .limit(20);
 ```
 
-**2. Mark Notification as Read (PATCH /api/v1/notifications/:id/read)**
+**Mark one notification as read:**
 ```javascript
 db.notifications.updateOne(
-  { 
-    _id: ObjectId("64a7b9c9f1a2b3c4d5e6f7g8"), 
-    userId: ObjectId("user_12345") 
-  },
-  { 
-    $set: { 
-      isRead: true, 
-      readAt: new Date() 
-    } 
-  }
+  { _id: ObjectId("64a7b9c9f1a2b3c4d5e6f7g8"), userId: ObjectId("user_12345") },
+  { $set: { isRead: true, readAt: new Date() } }
 );
 ```
 
-**3. Mark All Notifications as Read (POST /api/v1/notifications/read-all)**
+**Mark all notifications as read:**
 ```javascript
 db.notifications.updateMany(
-  { 
-    userId: ObjectId("user_12345"), 
-    isRead: false 
-  },
-  { 
-    $set: { 
-      isRead: true, 
-      readAt: new Date() 
-    } 
-  }
+  { userId: ObjectId("user_12345"), isRead: false },
+  { $set: { isRead: true, readAt: new Date() } }
 );
 ```
 
@@ -234,38 +239,98 @@ db.notifications.updateMany(
 
 ## Stage 3
 
-### Query Accuracy and Performance
+### Is the Query Accurate?
 
-**Is this query accurate?**
-Yes, the query is functionally accurate. It correctly retrieves all unread notifications for the specific student (`studentID = 1042` and `isRead = false`) and sorts them chronologically by their creation time ascending.
+Yes, the query is correct in what it's trying to do. It fetches unread notifications for `studentID = 1042`, filtered by `isRead = false`, and orders them by `createdAt ASC`. The logic is fine.
 
-**Why is this slow?**
-The query is slow because the database lacks an optimal index for this specific access pattern. With 5,000,000 records in the `notifications` table, filtering by `studentID` and `isRead` and then sorting by `createdAt` forces the database engine to perform a full table scan (or a large unoptimized index scan followed by an expensive in-memory sort). Scanning millions of rows takes $O(N)$ time complexity and consumes significant CPU and I/O resources, causing the performance bottleneck.
+### Why Is It Slow?
 
-### Proposed Changes and Computation Cost
+With 5 million records and no suitable index, the database has to scan through every row to find the ones matching `studentID = 1042` and `isRead = false`. That's a full table scan. After finding those rows, it then has to sort them in memory by `createdAt`. Both steps are expensive. The more data grows, the worse it gets — linearly.
 
-**What would you change?**
-I would add a **composite B-Tree index** on the exact columns used for filtering and sorting. Specifically, the index should be on `(studentID, isRead, createdAt)`.
+### What Would I Change?
 
-**Likely computation cost:**
-With the composite index `(studentID, isRead, createdAt)`, the database can traverse the B-Tree directly to the subset of rows matching `studentID = 1042` AND `isRead = false`. Because `createdAt` is the third key in the index, the retrieved rows are natively returned in sorted order, completely eliminating the need for an additional sort step. The computation cost (time complexity) reduces from $O(N \log N)$ to $O(\log N + K)$, where N is the total number of notifications and K is the number of unread notifications for that student. The query will execute in milliseconds.
+Add a composite index on `(studentID, isRead, createdAt)`. That's it. Here's why the order matters:
 
-### Advice on Indexing Every Column
+- `studentID` first — narrows the result set immediately to just that student's rows
+- `isRead` second — within that student's rows, keeps only the unread ones
+- `createdAt` third — the remaining rows come out pre-sorted, so the database skips the sort step entirely
 
-**Is this advice effective? Why/Why not?**
-No, adding indexes on every column is **highly ineffective** and is a well-known database anti-pattern. 
+**Before the index:** the database scans all 5M rows → then sorts → response is slow (O(N log N))  
+**After the index:** the database tree-walks directly to the matching rows → already sorted → response in milliseconds (O(log N + K))
 
-**Why not?**
-1. **Severe Write Performance Penalty:** Every time a new notification is inserted, updated, or deleted, the database must synchronously update *every single index*. In a high-throughput notification system, this will cripple write performance.
-2. **Massive Storage Overhead:** Indexes consume disk space and RAM. Indexing every column will exponentially bloat the database size, leading to higher infrastructure costs and pushing valuable data out of the in-memory cache.
-3. **Query Optimizer Confusion:** Having an excessive number of indexes can confuse the database's query optimizer, causing it to occasionally choose suboptimal execution plans.
+### Is Indexing Every Column a Good Idea?
 
-### SQL Query: Placement Notifications in the Last 7 Days
+No. This is a common mistake. Here's the problem: every index needs to be updated whenever a row is inserted, modified, or deleted. In a notification system where thousands of records are written per minute, updating 30 indexes on every insert will kill write throughput. On top of that, indexes consume memory. A large number of indexes can push actual data out of the memory cache, making reads slower too. The query optimizer may also get confused and pick a worse plan when too many indexes exist.
+
+The right approach is to index based on actual query patterns, not defensively across every column.
+
+### SQL Query: Students With Placement Notifications in Last 7 Days
 
 ```sql
-SELECT DISTINCT studentID 
+SELECT DISTINCT studentID
 FROM notifications
 WHERE notificationType = 'Placement'
   AND createdAt >= NOW() - INTERVAL 7 DAY;
 ```
-*(Note: Date subtraction syntax may vary slightly depending on the SQL dialect, e.g., PostgreSQL uses `CURRENT_DATE - INTERVAL '7 days'`)*
+
+*(PostgreSQL: use `CURRENT_TIMESTAMP - INTERVAL '7 days'` instead)*
+
+---
+
+## Stage 4
+
+### The Problem
+
+Notifications are fetched fresh from the database on every page load, for every student. Once the student count grows, this pattern hammers the database with redundant reads. Most of the time, a student's notification list hasn't changed since they last checked. The database is doing the same work repeatedly for no benefit.
+
+### What I Would Do
+
+There are a few strategies here, and they work best in combination:
+
+---
+
+**1. Cache Notifications in Redis**
+
+When a student loads their notification feed, the result gets stored in Redis with a short TTL (say, 60 seconds). The next request — or any request within that window — hits Redis, not MongoDB. The database load drops sharply.
+
+When a new notification arrives or a student marks something as read, we invalidate that student's cache key. The next fetch rebuilds it from the database and caches again.
+
+*Tradeoff:* There's a brief window where a student might see slightly stale data (up to the TTL duration). For a campus notification system, 60 seconds of lag is acceptable. If we needed stricter freshness, we'd either shorten the TTL or invalidate the cache on every write event.
+
+---
+
+**2. Unread Count as a Separate Cached Value**
+
+The notification badge (showing "3 unread") is fetched much more frequently than the full notification list. Instead of running `COUNT(*)` on MongoDB each time, store just the unread count per user in Redis. Update it directly when a notification is created (+1) or marked as read (-1). This makes badge rendering free in terms of database cost.
+
+*Tradeoff:* If Redis crashes and restarts without persistence, the counts can drift out of sync. The fix is to rebuild the count from MongoDB on cache miss — which we'd do anyway.
+
+---
+
+**3. Fan-out on Read for Broadcast Notifications**
+
+Right now, broadcasting an announcement to 10,000 students likely creates 10,000 separate documents in MongoDB. When each student loads their feed, they're each getting their own copy fetched individually. Instead, store one global notification document. During a student's feed query, merge their personal notifications with active global ones in the application layer.
+
+*Tradeoff:* The merge logic adds a small amount of application complexity, but it eliminates the write storm on broadcast and cuts storage significantly.
+
+---
+
+**4. Pagination — Don't Fetch Everything**
+
+Fetching all of a student's notifications in one query is wasteful. The API already supports `limit` and `page` parameters (defined in Stage 1). If the frontend actually uses them — loading 20 at a time and requesting more only when the user scrolls — the per-request cost drops dramatically.
+
+*Tradeoff:* Requires the frontend to implement scroll-based or button-triggered pagination instead of dumping everything at once.
+
+---
+
+### Summary of Tradeoffs
+
+| Strategy | Benefit | Tradeoff |
+|---|---|---|
+| Redis cache | DB queries drop significantly | Brief data staleness (1 min) |
+| Cached unread count | Badge renders without DB hit | Slight drift risk on crash |
+| Fan-out on read | Eliminates broadcast write storm | Merge logic in app layer |
+| Proper pagination | Smaller, faster queries | Frontend must implement paging |
+
+The first two strategies give the biggest immediate gain and are worth implementing regardless of the others.
+

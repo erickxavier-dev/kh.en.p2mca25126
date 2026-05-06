@@ -1,52 +1,33 @@
 const { Log } = require('logging-middleware');
 
-// In-memory data for now
-const placementsData = [
-    { id: 101, company: "Tech Solutions", role: "SDE", date: "June 2026" },
-    { id: 102, company: "DataCorp", role: "Analyst", date: "July 2026" }
+// mock data — would come from DB in production
+const placements = [
+    { id: 101, company: 'Tech Solutions', role: 'SDE', date: 'June 2026' },
+    { id: 102, company: 'DataCorp', role: 'Data Analyst', date: 'July 2026' }
 ];
 
-const eventsData = [
-    { id: 201, name: "Spring Fest 26", location: "Main Ground", time: "10 AM" },
-    { id: 202, name: "Coding Hackathon", location: "Lab 3", time: "9 AM" }
+const events = [
+    { id: 201, name: 'Spring Fest 26', location: 'Main Ground', time: '10 AM' },
+    { id: 202, name: 'Coding Hackathon', location: 'Lab 3', time: '9 AM' }
 ];
 
-const resultsData = [
-    { id: 301, sem: "Sem 5 Regular", status: "Published", url: "/res/sem5" }
+const results = [
+    { id: 301, sem: 'Sem 5 Regular', status: 'Published', url: '/res/sem5' }
 ];
 
-const fetchPlacements = async (req, res) => {
-    try {
-        await Log('backend', 'info', 'controller', 'Requested placement data');
-        res.json(placementsData);
-    } catch (e) {
-        await Log('backend', 'error', 'handler', e.message);
-        res.status(500).send('Error loading placements');
-    }
-};
+async function fetchPlacements(req, res) {
+    await Log('backend', 'info', 'controller', 'placements requested');
+    res.json(placements);
+}
 
-const fetchEvents = async (req, res) => {
-    try {
-        await Log('backend', 'info', 'controller', 'Requested event data');
-        res.json(eventsData);
-    } catch (e) {
-        await Log('backend', 'error', 'handler', e.message);
-        res.status(500).send('Error loading events');
-    }
-};
+async function fetchEvents(req, res) {
+    await Log('backend', 'info', 'controller', 'events requested');
+    res.json(events);
+}
 
-const fetchResults = async (req, res) => {
-    try {
-        await Log('backend', 'info', 'controller', 'Requested result data');
-        res.json(resultsData);
-    } catch (e) {
-        await Log('backend', 'error', 'handler', e.message);
-        res.status(500).send('Error loading results');
-    }
-};
+async function fetchResults(req, res) {
+    await Log('backend', 'info', 'controller', 'results requested');
+    res.json(results);
+}
 
-module.exports = {
-    fetchPlacements,
-    fetchEvents,
-    fetchResults
-};
+module.exports = { fetchPlacements, fetchEvents, fetchResults };
