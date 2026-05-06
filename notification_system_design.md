@@ -473,5 +473,31 @@ This approach gives us a time complexity of **O(M log N)** and a space complexit
 
 The implementation is located in `priority_inbox.js`. It fetches data from the provided Evaluation API, parses the JSON, and runs the Min-Heap algorithm. The script can be executed via Node.js from the command line, optionally taking `N` as an argument (e.g., `node priority_inbox.js 15`).
 
+---
 
+## Stage 7
+
+### Frontend Implementation Overview
+
+The frontend is a responsive React application built with Vite and React Router, located in the `notification_app_fe` subdirectory. The application adheres strictly to all assignment constraints:
+- **Material UI Only**: The entire interface is styled using native Material UI components and themes without any external CSS libraries (ShadCN, Tailwind, etc.).
+- **Zero Console Logs**: All `console.log`, `console.warn`, and `console.error` statements have been purged. The application exclusively uses the mandated custom `logging_middleware` for reporting client-side errors and page views.
+- **Port 3000**: The Vite development server has been strictly locked to `http://localhost:3000`.
+
+### Features
+
+1. **Routing Strategy**: 
+   - `/` — Priority Inbox: Displays the top notifications using the Min-Heap logic established in Stage 6, now integrated natively into a React Hook. It supports runtime limit adjustments and type filtering.
+   - `/all` — Standard Inbox: Implements server-side pagination utilizing the `limit`, `page`, and `notification_type` query parameters.
+2. **Viewed Status Tracking**: 
+   - A `localStorage`-backed read receipt system guarantees that notifications are distinctly marked with visual badges until the user manually interacts with them. This avoids clutter and clearly distinguishes new items.
+3. **CORS Handling**: 
+   - Since the remote evaluation API sits at `http://20.207.122.201`, a Vite proxy was implemented to safely bridge client requests to `/evaluation-service/...` without triggering cross-origin policy blocks.
+
+### How to Run
+
+1. Navigate to the frontend directory: `cd notification_app_fe`
+2. Install dependencies: `npm install`
+3. Run the development server: `npm run dev`
+4. Access the application exactly at `http://localhost:3000`
 
