@@ -2,7 +2,8 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 
-import { setAuthToken } from 'logging-middleware'
+import * as logPkg from 'logging-middleware';
+const { setAuthToken } = logPkg;
 
 // Pass token from environment variables
 const token = import.meta.env.VITE_EVALUATION_AUTH_TOKEN;
