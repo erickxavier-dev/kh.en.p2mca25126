@@ -334,3 +334,118 @@ Fetching all of a student's notifications in one query is wasteful. The API alre
 
 The first two strategies give the biggest immediate gain and are worth implementing regardless of the others.
 
+---
+
+## Stage 5
+
+### What's Wrong With the Current Implementation
+
+```
+function notify_all(student_ids: array, message: string):
+    for student_id in student_ids:
+        send_email(student_id, message)    # calls Email API
+        save_to_db(student_id, message)    # DB insert
+        push_to_app(student_id, message)   # SSE push
+```
+
+There are several problems here:
+
+**1. It's synchronous and blocking.**
+The loop runs one student at a time. With 50,000 students, this will take a very long time. If `send_email` takes even 100ms per call, that's over 80 minutes just for emails alone.
+
+**2. No fault tolerance.**
+If the email API fails at student 25,000 — which the logs confirm happened with 200 students — the loop either crashes entirely or silently skips those students. There's no retry, no record of who was missed, and no way to recover.
+
+**3. Email and DB save are coupled — they shouldn't be.**
+`send_email` is an external call that can fail, timeout, or get rate-limited. `save_to_db` is a fast local write. Tying them together in the same step means a transient email failure can block or corrupt the DB record. These two operations have completely different failure modes.
+
+**4. No visibility into what happened.**
+There's no status tracking, no logging per student, and no way to see how many of the 50,000 actually received the notification until the logs reveal failures after the fact.
+
+---
+
+### Should Saving to DB and Sending Email Happen Together?
+
+No, they should be decoupled.
+
+The DB save should happen first and is treated as the source of truth. Once saved, the notification exists in the system — the student will see it in-app regardless of what happens with the email. The email is just a delivery channel and can fail and retry independently without any issue.
+
+If we tie both operations together and the email fails, we risk skipping the DB save too, which means the student gets neither the email nor the in-app notification. That's a worse outcome than a failed email.
+
+---
+
+### Redesigned Approach
+
+The right way to handle 50,000 students is a **message queue with parallel workers**. Instead of processing everyone in a blocking loop:
+
+1. "Notify All" enqueues one task per student into a queue
+2. Workers pull tasks and process them in parallel (multiple workers running at the same time)
+3. Each worker handles one student's full notification in isolation
+4. Failed tasks get retried automatically with backoff
+5. Permanently failed tasks go to a dead-letter queue for inspection
+
+The HR click returns immediately, delivery happens in the background, and individual failures don't affect other students.
+
+---
+
+### Revised Pseudocode
+
+```
+function notify_all(student_ids: array, message: string) -> job_id:
+    job_id = generate_uuid()
+    log_job_start(job_id, total=len(student_ids))
+
+    for student_id in student_ids:
+        enqueue({
+            job_id: job_id,
+            student_id: student_id,
+            message: message,
+            retries_left: 3
+        })
+
+    return job_id  # returned to HR so they can track progress
+
+
+function process_task(task):
+    try:
+        # Step 1: save to DB first — this is the source of truth
+        save_to_db(task.student_id, task.message)
+
+        # Step 2: send email — independent, can retry on its own
+        sent = send_email(task.student_id, task.message)
+        if not sent:
+            enqueue_email_retry(task.student_id, task.message, retries=3)
+
+        # Step 3: push in-app notification via SSE (Stage 1 mechanism)
+        push_to_app(task.student_id, task.message)
+
+        log_success(task.job_id, task.student_id)
+
+    except Exception as e:
+        log_error(task.job_id, task.student_id, e)
+
+        if task.retries_left > 0:
+            task.retries_left -= 1
+            enqueue(task)
+        else:
+            move_to_dead_letter_queue(task)
+
+
+function get_job_status(job_id):
+    return {
+        total: count_all(job_id),
+        delivered: count_success(job_id),
+        failed: count_failed(job_id),
+        pending: count_pending(job_id)
+    }
+```
+
+### Summary of Changes and Why
+
+- **DB save before email** — notification record exists regardless of email outcome
+- **Email retried in isolation** — a failed email doesn't redo or affect the DB save
+- **Parallel workers** — 50,000 students processed concurrently, not one at a time
+- **Dead-letter queue** — persistent failures are visible and recoverable manually
+- **Job status endpoint** — HR can check in real time how many students received the notification
+
+
